@@ -4,7 +4,6 @@ from dj_rest_auth.registration.views import RegisterView
 from chat.models import Setting
 from allauth.account import app_settings as allauth_account_settings
 
-
 class RegistrationView(RegisterView):
     def create(self, request, *args, **kwargs):
         try:

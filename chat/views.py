@@ -30,6 +30,7 @@ from .tools import TOOL_LIST
 from .llm import get_embedding_document, unpick_faiss, langchain_doc_chat
 from .llm import setup_openai_env as llm_openai_env
 from .llm import setup_openai_model as llm_openai_model
+from subscription.utils import rate_limiter
 
 
 logger = logging.getLogger(__name__)
@@ -236,7 +237,19 @@ MODELS = {
         'max_tokens': 131072,
         'max_prompt_tokens': 123072,
         'max_response_tokens': 8000,
-    }    
+    },
+    'gpt-4o-mini-2024-07-18': {
+        'name': 'gpt-4o-mini-2024-07-18',
+        'max_tokens': 131072,
+        'max_prompt_tokens': 123072,
+        'max_response_tokens': 8000,
+    },
+    'o1-mini-2024-09-12': {
+        'name': 'o1-mini-2024-09-12',
+        'max_tokens': 131072,
+        'max_prompt_tokens': 123072,
+        'max_response_tokens': 8000,
+    }  
 }
 
 
@@ -284,7 +297,7 @@ def gen_title(request):
     my_openai = get_openai(openai_api_key)
     try:
         openai_response = my_openai.ChatCompletion.create(
-            model='gpt-3.5-turbo-0301',
+            model='gpt-4o-mini-2024-07-18',
             messages=messages,
             max_tokens=256,
             temperature=0.5,
@@ -442,6 +455,15 @@ def conversation(request):
             status=status.HTTP_400_BAD_REQUEST
         )
 
+    # 检查用户是否达到速率限制
+    if rate_limiter.is_rate_limited(request.user.id):
+        return Response(
+            {
+                'error': 'Rate limit exceeded. Please try again later.'
+            },
+            status=status.HTTP_429_TOO_MANY_REQUESTS
+        )
+
     def stream_content():
         try:
             if messages['renew']:
@@ -533,6 +555,9 @@ def conversation(request):
             'newDocId': new_doc_id,
         })
 
+        # 记录用户使用情况
+        rate_limiter.record_usage(request.user.id)
+
     def stream_langchain():
         if messages['renew']:  # if the new user message is sending to AI
             try:
@@ -543,6 +568,8 @@ def conversation(request):
                     'error': str(e)
                 })
                 logger.debug('langchain error %s', e)
+                return
+
         # create conversation
         if conversation_id:
             # get the conversation
@@ -818,16 +845,6 @@ def num_tokens_from_text(text, model="gpt-3.5-turbo-0301"):
         )
         return num_tokens_from_text(text, model=f"{model}-0613")
 
-    if model not in [
-        "gpt-3.5-turbo-0613",
-        "gpt-4-0613",
-        "gpt-3.5-turbo-16k-0613",
-        "gpt-4-32k-0613",
-        "gpt-4-1106-preview",
-        "gpt-4o"
-    ]:
-        raise NotImplementedError(
-            f"num_tokens_from_text() is not implemented for model {model}.")
 
     return len(encoding.encode(text))
 
@@ -852,19 +869,18 @@ def num_tokens_from_messages(messages, model="gpt-3.5-turbo-0301"):
         "gpt-3.5-turbo-16k-0613",
         "gpt-4-32k-0613",
         "gpt-4-1106-preview",
-        "gpt-4o"
+        "gpt-4o",
+        "gpt-4o-mini-2024-07-18",
+        "o1-mini-2024-09-12"
     ]:
-        tokens_per_message = 4  # every message follows <|start|>{role/name}\n{content}<|end|>\n
-        tokens_per_name = -1    # if there's a name, the role is omitted
+        tokens_per_message = 4  # 每条消息的token数
+        tokens_per_name = -1    # 如果有名字，角色会被省略
     elif model in ["gpt-4-0613"]:
         tokens_per_message = 3
         tokens_per_name = 1
     else:
-        raise NotImplementedError((
-            f"num_tokens_from_messages() is not implemented for model {model}. "
-            "See https://github.com/openai/openai-python/blob/main/chatml.md "
-            "for information on how messages are converted to tokens."
-        ))
+        tokens_per_message = 3
+        tokens_per_name = 1
 
     num_tokens = 0
     for message in messages:
@@ -883,3 +899,5 @@ def get_openai(openai_api_key):
     if proxy:
         openai.api_base = proxy
     return openai
+
+

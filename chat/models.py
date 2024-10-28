@@ -57,3 +57,4 @@ class Prompt(models.Model):
 class Setting(models.Model):
     name = models.CharField(max_length=255)
     value = models.CharField(max_length=255)
+
