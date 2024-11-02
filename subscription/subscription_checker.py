@@ -17,7 +17,8 @@ class SubscriptionChecker:
         self.running = True
         self.thread = threading.Thread(target=self.run)
         self.thread.daemon = True
-        
+        print("初始化订阅检查器...")
+        print(f"检查间隔时间: {check_interval}秒")
         # 在启动线程前进行一次全面检查
         self.check_all_subscriptions()
         

@@ -58,3 +58,20 @@ class Setting(models.Model):
     name = models.CharField(max_length=255)
     value = models.CharField(max_length=255)
 
+
+class LanguageModel(models.Model):
+    name = models.CharField(max_length=100, unique=True)
+    display_name = models.CharField(max_length=255)
+    max_tokens = models.IntegerField()
+    max_prompt_tokens = models.IntegerField()
+    max_response_tokens = models.IntegerField()
+    frequency_penalty = models.FloatField(default=0.0)
+    presence_penalty = models.FloatField(default=0.0)
+    temperature = models.FloatField(default=0.7)
+    top_p = models.FloatField(default=1.0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.display_name
+

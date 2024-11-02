@@ -1,6 +1,6 @@
 from django.db import models
 from rest_framework import serializers
-from .models import Conversation, Message, Prompt, EmbeddingDocument, Setting
+from .models import Conversation, Message, Prompt, EmbeddingDocument, Setting, LanguageModel
 
 class ConversationSerializer(serializers.ModelSerializer):
     class Meta:
@@ -35,3 +35,8 @@ class SettingSerializer(serializers.ModelSerializer):
     class Meta:
         model = Setting
         fields = ('name', 'value')
+
+class LanguageModelSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = LanguageModel
+        fields = ['id', 'name', 'display_name', 'max_tokens', 'max_prompt_tokens', 'max_response_tokens', 'created_at', 'updated_at']

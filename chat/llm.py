@@ -50,6 +50,8 @@ from langchain.callbacks.manager import (
     AsyncCallbackManagerForChainRun,
 )
 
+from chat.models import LanguageModel
+
 logger = logging.getLogger(__name__)
 
 text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(chunk_size=1280, chunk_overlap=200)
@@ -64,10 +66,10 @@ openai_env = {
 }
 
 openai_model = {
-    'name': 'gpt-3.5-turbo',
-    'max_tokens': 4096,
-    'max_prompt_tokens': 3096,
-    'max_response_tokens': 1000
+    'name': '',
+    'max_tokens': 0,
+    'max_prompt_tokens': 0,
+    'max_response_tokens': 0
 }
 
 _queue = queue.Queue()
@@ -83,10 +85,19 @@ def setup_openai_env(api_base=None, api_key=None):
     return (openai_env['api_base'], openai_env['api_key'])
 
 
-def setup_openai_model(model):
-    logger.debug(model)
-    openai_model.update(model)
-    logger.debug(model)
+def setup_openai_model(model_name):
+    try:
+        model = LanguageModel.objects.get(name=model_name)
+        openai_model.update({
+            'name': model.name,
+            'max_tokens': model.max_tokens,
+            'max_prompt_tokens': model.max_prompt_tokens,
+            'max_response_tokens': model.max_response_tokens
+        })
+    except LanguageModel.DoesNotExist:
+        logger.error(f"Model {model_name} does not exist in the database.")
+        raise ValueError(f"Model {model_name} does not exist.")
+
 
 
 # class OutputStreamingCallbackHandler(AsyncCallbackHandler):
@@ -141,22 +152,20 @@ class EmbeddingModel:
 
 
 class ChatModel:
-    def __init__(self):
-        self.name = None
+    def __init__(self, model_name='gpt-4o-mini'):
+        self.name = model_name
         self._model = None
 
     @property
     def model(self):
         if not self._model:
             api_base, api_key = setup_openai_env()
-            self.name = 'open_ai'
-            max_response_tokens = openai_model['max_prompt_tokens']
-            if max_response_tokens > 1024:
-                max_response_tokens = 1024
+            setup_openai_model(self.name)
+            max_response_tokens = openai_model.max_response_tokens
             self._model = ChatOpenAI(
                 api_key=api_key,
                 api_base=api_base,
-                model_name=openai_model['name'],
+                model_name=openai_model.name,
                 max_tokens=max_response_tokens,
                 streaming=True,
                 # callbacks=[OSC],
