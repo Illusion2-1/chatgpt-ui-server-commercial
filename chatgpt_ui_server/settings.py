@@ -62,6 +62,7 @@ INSTALLED_APPS = [
     'stats.apps.StatsConfig',
     'provider.apps.ProviderConfig',
     'subscription',
+    'announcements',
     
 ]
 

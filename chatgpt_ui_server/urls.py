@@ -24,6 +24,7 @@ urlpatterns = [
     path('api/upload_conversations/', upload_conversations, name='upload_conversations'),
     path('api/gen_title/', gen_title, name='gen_title'),
     path('api/account/', include('account.urls')),
+    path('api/announcements/', include('announcements.urls')),
     path('admin/', admin.site.urls),
     path('api/', include('subscription.urls')),
 ]
