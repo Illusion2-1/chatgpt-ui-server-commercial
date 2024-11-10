@@ -28,6 +28,4 @@ class SettingAdmin(admin.ModelAdmin):
 
 @admin.register(LanguageModel)
 class LanguageModelAdmin(admin.ModelAdmin):
-    list_display = ('id', 'name', 'display_name', 'max_tokens', 'max_prompt_tokens', 'max_response_tokens', 'created_at', 'updated_at')
-    list_editable = ('name', 'display_name', 'max_tokens', 'max_prompt_tokens', 'max_response_tokens')
     search_fields = ('name', 'display_name')
