@@ -35,6 +35,8 @@ from subscription.utils import rate_limiter
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_MODEL = os.getenv('DEFAULT_MODEL', 'gpt-4o-mini-2024-07-18')
+
 class SettingViewSet(viewsets.ModelViewSet):
     serializer_class = SettingSerializer
     # permission_classes = [IsAuthenticated]
@@ -206,11 +208,21 @@ class LanguageModelViewSet(viewsets.ModelViewSet):
     serializer_class = LanguageModelSerializer
     permission_classes = [IsAuthenticated]
 
-    def get_available_models(self):
-        return LanguageModel.objects.all()
+    def get_available_models(self, user):
+        # 获取用户的订阅信息
+        user_profile = user.profile
+        available_models = []
+        
+        # 检查用户是否有活跃的订阅
+        if user_profile.subscription and user_profile.subscription_is_active:
+            available_models = user_profile.subscription.available_models
+        
+        # 返回与用户订阅匹配的模型
+        return LanguageModel.objects.filter(name__in=available_models)
 
     def list(self, request, *args, **kwargs):
-        queryset = self.get_queryset()
+        # 使用 get_available_models 方法获取用户可用的模型
+        queryset = self.get_available_models(request.user)
         serializer = self.get_serializer(queryset, many=True)
         return Response(serializer.data)
 
@@ -256,13 +268,13 @@ def gen_title(request):
         {"role": "user", "content": prompt + message.message},
     ]
 
-    # 优先尝试使用 gpt-4o-mini 模型
+    # 优先尝试使用默认模型
     try:
-        default_model = LanguageModel.objects.get(name='gpt-4o-mini-2024-07-18')
+        default_model = LanguageModel.objects.get(name=DEFAULT_MODEL)
     except LanguageModel.DoesNotExist:
         default_model = None
 
-    model_name = 'gpt-4o-mini-2024-07-18' if default_model else request.data.get('model_name')
+    model_name = DEFAULT_MODEL if default_model else request.data.get('model_name')
     try:
         model = get_current_model(model_name, request.data.get('max_tokens'))
     except ValueError as ve:
@@ -286,10 +298,10 @@ def gen_title(request):
         increase_token_usage(request.user, openai_response['usage']['total_tokens'], api_key)
     except Exception as e:
         logger.error(e)
-        if default_model and model_name != 'gpt-4o-mini-2024-07-18':
+        if default_model and model_name != DEFAULT_MODEL:
             # 如果默认模型失败且用户指定了其他模型，则回退到用户模型
             try:
-                model = LanguageModel.objects.get(name='gpt-4o-mini-2024-07-18')
+                model = LanguageModel.objects.get(name=DEFAULT_MODEL)
                 openai_response = my_openai.ChatCompletion.create(
                     model=model.name,
                     messages=messages,
@@ -403,6 +415,11 @@ def conversation(request):
     message_type = message_object.get('message_type', 0)
     tool_name = message_object.get('tool', None)
     tool_args = message_object.get('tool_args', None)
+    user_profile = request.user.profile
+
+    available_models = []
+    if user_profile.subscription and user_profile.subscription_is_active:
+        available_models = user_profile.subscription.available_models
     if tool_name:
         tool = {'name': tool_name, 'args': tool_args}
     else:
@@ -429,14 +446,35 @@ def conversation(request):
     my_openai = get_openai(openai_api_key)
     llm_openai_env(my_openai.api_base, my_openai.api_key)
 
+    # 如果用户指定了模型，检查是否有权限使用
+    if model_name and model_name not in available_models:
+        return Response(
+            {'error': f'您当前的订阅计划不支持使用 {model_name} 模型'},
+            status=status.HTTP_403_FORBIDDEN
+        )
+    
+    # 如果用户未指定模型，检查是否可以使用默认模型
+    if not model_name and DEFAULT_MODEL not in available_models:
+        return Response(
+            {'error': f'您当前的订阅计划不支持使用默认模型'},
+            status=status.HTTP_403_FORBIDDEN
+        )
+
+    # 检查用户是否达到速率限制
+    if rate_limiter.is_rate_limited(request.user.id):
+        return Response(
+            {'error': 'Rate limit exceeded. Please try again later.'},
+            status=status.HTTP_429_TOO_MANY_REQUESTS
+        )
+
     # 获取用户请求的模型,如果未指定则尝试使用默认模型
     try:
         if model_name:  # 优先使用用户指定的模型
             model = get_current_model(model_name, request_max_response_tokens)
         else:  # 用户未指定模型，尝试使用默认模型
             try:
-                model = get_current_model('gpt-4o-mini-2024-07-18', request_max_response_tokens)
-                logger.debug('Using default model: gpt-4o-mini-2024-07-18')
+                model = get_current_model(DEFAULT_MODEL, request_max_response_tokens)
+                logger.debug(f'Using default model: {DEFAULT_MODEL}')
             except LanguageModel.DoesNotExist:
                 return Response(
                     {'error': '未指定模型且默认模型不可用'},
@@ -456,15 +494,6 @@ def conversation(request):
                 'error': str(e)
             },
             status=status.HTTP_400_BAD_REQUEST
-        )
-
-    # 检查用户是否达到速率限制
-    if rate_limiter.is_rate_limited(request.user.id):
-        return Response(
-            {
-                'error': 'Rate limit exceeded. Please try again later.'
-            },
-            status=status.HTTP_429_TOO_MANY_REQUESTS
         )
 
     def stream_content():
@@ -814,17 +843,17 @@ def get_current_model(model_name, request_max_response_tokens):
         if model_name:
             model = LanguageModel.objects.get(name=model_name)
         else:
-            # 尝试获取默认的 gpt-4o-mini-2024-07-18 模型
-            model = LanguageModel.objects.get(name='gpt-4o-mini-2024-07-18')
+            # 尝试获取默认模型
+            model = LanguageModel.objects.get(name=DEFAULT_MODEL)
     except LanguageModel.DoesNotExist:
         if model_name:
             # 如果用户指定的模型不存在，回退到默认模型
             try:
-                model = LanguageModel.objects.get(name='gpt-4o-mini-2024-07-18')
+                model = LanguageModel.objects.get(name=DEFAULT_MODEL)
             except LanguageModel.DoesNotExist:
-                raise ValueError("默认模型 'gpt-4o-mini-2024-07-18' 不存在。")
+                raise ValueError(f"默认模型 '{DEFAULT_MODEL}' 不存在。")
         else:
-            raise ValueError("模型名未指定，且默认模型 'gpt-4o-mini-2024-07-18' 不存在。")
+            raise ValueError(f"模型名未指定，且默认模型 '{DEFAULT_MODEL}' 不存在。")
     
     if request_max_response_tokens is not None:
         model.max_response_tokens = int(request_max_response_tokens)
