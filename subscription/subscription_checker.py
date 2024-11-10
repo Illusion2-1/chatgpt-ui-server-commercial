@@ -53,15 +53,17 @@ class SubscriptionChecker:
         """
         while self.running:
             now = timezone.now()
-            expired_users = []
+            expired_user_ids = []
             with self.lock:
                 for user_id, expiry in list(self.subscriptions.items()):
                     if expiry <= now:
-                        expired_users.append(user_id)
+                        expired_user_ids.append(user_id)
                         del self.subscriptions[user_id]
 
-            if expired_users:
-                self.deactivate_subscriptions(expired_users)
+            if expired_user_ids:
+                # 获取过期用户的Profile对象
+                expired_profiles = Profile.objects.filter(user_id__in=expired_user_ids)
+                self.deactivate_subscriptions(expired_profiles)
 
             time.sleep(self.check_interval)
 
