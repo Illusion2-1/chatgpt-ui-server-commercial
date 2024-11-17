@@ -393,6 +393,31 @@ def upload_conversations(request):
     return Response(conversation_ids)
 
 
+def debug_stream(stream_generator):
+    """装饰器生成器，用于调试流式响应内容"""
+    for chunk in stream_generator:
+        try:
+            # 解码二进制数据（如果需要）
+            if isinstance(chunk, bytes):
+                chunk_str = chunk.decode('utf-8')
+            else:
+                chunk_str = chunk
+                
+            # 尝试解析SSE格式的数据
+            if chunk_str.startswith('data:'):
+                data = chunk_str.split('data: ')[1].strip()
+                try:
+                    parsed_data = json.loads(data)
+                    logger.debug("Stream event data: %s", parsed_data)
+                except json.JSONDecodeError:
+                    logger.debug("Stream raw data: %s", data)
+            else:
+                logger.debug("Stream chunk: %s", chunk_str)
+        except Exception as e:
+            logger.error("Error debugging stream: %s", str(e))
+        
+        yield chunk
+
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def conversation(request):
@@ -499,6 +524,28 @@ def conversation(request):
     def stream_content():
         try:
             if messages['renew']:
+                # 检查是否是图片对话
+                if message_object_list and message_object_list[-1].get('tool') == 'image_chat':
+                    # 构造带图片的消息格式
+                    latest_message = message_object_list[-1]
+                    image_message = {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": latest_message['content']
+                            },
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": latest_message['image']
+                                }
+                            }
+                        ]
+                    }
+                    # 替换最后一条消息为图片消息格式
+                    messages['messages'][-1] = image_message
+                
                 openai_response = my_openai.ChatCompletion.create(
                     model=model.name,
                     messages=messages['messages'],
@@ -586,9 +633,6 @@ def conversation(request):
             'newDocId': messages.get('doc_id', None),
         })
 
-        # 记录用户使用情况
-        rate_limiter.record_usage(request.user.id)
-
     def stream_langchain():
         if messages['renew']:  # if the new user message is sending to AI
             try:
@@ -668,16 +712,18 @@ def conversation(request):
 
     if messages.get('faiss_store', None) and not web_search_params:
         response = StreamingHttpResponse(
-            stream_langchain(),
+            debug_stream(stream_langchain()),
             content_type='text/event-stream'
         )
     else:
         response = StreamingHttpResponse(
-            stream_content(),
+            debug_stream(stream_content()),
             content_type='text/event-stream'
         )
     response['X-Accel-Buffering'] = 'no'
     response['Cache-Control'] = 'no-cache'
+    rate_limiter.record_usage(request.user.id)
+    
     return response
 
 
@@ -727,6 +773,7 @@ def build_messages(model, user, conversation_id, new_messages, web_search_params
         'message': msg['content'], 
         'message_type': message_type,
         'embedding_message_doc': msg.get('embedding_message_doc', None),
+        'image': msg.get('image', None),
     } for msg in new_messages]
 
     if frugal_mode:
@@ -734,107 +781,65 @@ def build_messages(model, user, conversation_id, new_messages, web_search_params
 
     system_messages = [{"role": "system", "content": system_content}]
     current_token_count = num_tokens_from_messages(system_messages, model.name)
-
     max_token_count = model.max_prompt_tokens
-
     messages = []
-
     result = {
         'renew': True,
         'messages': messages,
         'tokens': 0,
         'faiss_store': None,
-        'doc_id': None,  # new doc id
+        'doc_id': None,
     }
 
-    faiss_store = None
+    logger.debug(f"Processing message with tool: {tool}, message_type: {message_type}")
 
+    # 处理所有消息
+    faiss_store = None
     first_msg = True
 
     while current_token_count < max_token_count and len(ordered_messages_list) > 0:
         message = ordered_messages_list.pop()
         if isinstance(message, Message):
             message = model_to_dict(message)
+        
         role = "assistant" if message['is_bot'] else "user"
         message_content = message['message']
-        message_type = message['message_type']
-        if web_search_params is not None and first_msg:
-            search_results = web_search(SearchRequest(message['message'], ua=web_search_params['ua']), num_results=5)
-            message_content = compile_prompt(search_results, message['message'], default_prompt=web_search_params['default_prompt'])
-        if tool and first_msg:  # apply to latest message only
-            tool_name = tool['name']
-            func = TOOL_LIST.get(tool_name, None)
-            if tool_name == 'arxiv':
-                if not tool.get('args', None):
-                    tool['args'] = {}
-                args = tool['args']
-                args['conversation_id'] = conversation_id
-                args['user'] = user
-            if func:
-                message_content = func(message['message'], tool['args'])
-        if message_type in [
-            Message.hidden_message_type,
-            Message.arxiv_context_message_type,
-            Message.doc_context_message_type,
-        ]:
-            # these messages only attached context to the conversation
-            # they should not be sent to the LLM
-            if first_msg:  # if the new message is a contextual message
-                result['renew'] = False
-            if message_type == Message.doc_context_message_type:
-                doc_id = message["embedding_message_doc"]
-                logger.debug('get a document %s', message_content)
-                if doc_id:
-                    logger.debug('get the document id %s', doc_id)
-                    doc_obj = EmbeddingDocument.objects.get(id=doc_id)
-                    if doc_obj:
-                        logger.debug('get the document obj %s %s', doc_id, doc_obj.title)
-                        vector_store = unpick_faiss(doc_obj.faiss_store)
-                        if faiss_store:
-                            faiss_store.merge_from(vector_store)
-                        else:
-                            faiss_store = vector_store
-                        logger.debug('document obj %s %s loaded', doc_id, doc_obj.title)
-            elif message_type == Message.arxiv_context_message_type:
-                if first_msg:
-                    doc_id = tool['args'].get('embedding_doc_id', None)
-                    doc_title = tool['args'].get('doc_title', None)
-                    new_messages[-1]['content'] = message_content
-                    new_messages[-1]['embedding_message_doc'] = doc_id
-                    result['doc_id'] = doc_id
-                    result['doc_title'] = doc_title
-                else:
-                    doc_id = message['embedding_message_doc']
-                if doc_id:
-                    message['embedding_message_doc'] = doc_id
-                    logger.debug('get the arxiv document id %s', doc_id)
-                    doc_obj = EmbeddingDocument.objects.get(id=doc_id)
-                    if doc_obj:
-                        logger.debug('get the document obj %s %s', doc_id, doc_obj.title)
-                        vector_store = unpick_faiss(doc_obj.faiss_store)
-                        if faiss_store:
-                            faiss_store.merge_from(vector_store)
-                        else:
-                            faiss_store = vector_store
-                        logger.debug('document obj %s %s loaded', doc_id, doc_obj.title)
-                else:
-                    raise RuntimeError('ArXiv document failed to download or embed')
-        else:
-            new_message = {"role": role, "content": message_content}
-            new_token_count = num_tokens_from_messages(system_messages + messages + [new_message], model.name)
-            if new_token_count > max_token_count:
-                if len(messages) > 0:
-                    break
-                raise ValueError(
-                    f"Prompt is too long. Max token count is {max_token_count}, but prompt is {new_token_count} tokens long.")
-            messages.insert(0, new_message)
-            current_token_count = new_token_count
+        
+        # 构造基本消息
+        new_message = {"role": role, "content": message_content}
+        
+        # 如果是最后一条消息且包含图片，修改消息格式
+        if first_msg and message.get('image'):
+            new_message["content"] = [
+                {
+                    "type": "text",
+                    "text": message_content
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": message['image']
+                    }
+                }
+            ]
+            logger.debug("Image message prepared")
+        
+        # 计算token并添加消息
+        new_token_count = num_tokens_from_messages(system_messages + messages + [new_message], model.name)
+        if new_token_count > max_token_count:
+            if len(messages) > 0:
+                break
+            raise ValueError(f"Prompt is too long. Max token count is {max_token_count}, but prompt is {new_token_count} tokens long.")
+        
+        messages.insert(0, new_message)
+        current_token_count = new_token_count
         first_msg = False
 
     result['messages'] = system_messages + messages
     result['tokens'] = current_token_count
     result['faiss_store'] = faiss_store
 
+    logger.debug(f"Final result: renew=True, message_count={len(messages)}")
     return result
 
 
@@ -897,7 +902,16 @@ def num_tokens_from_messages(messages, model="gpt-4o-mini-2024-07-18"):
     for message in messages:
         num_tokens += tokens_per_message
         for key, value in message.items():
-            num_tokens += len(encoding.encode(value))
+            if isinstance(value, list):
+                for content_item in value:
+                    if content_item["type"] == "text":
+                        num_tokens += len(encoding.encode(content_item["text"]))
+                    elif content_item["type"] == "image_url":
+                        num_tokens += 1000
+            else:
+                # 处理普通文本消息
+                if isinstance(value, str):
+                    num_tokens += len(encoding.encode(value))
             if key == "name":
                 num_tokens += tokens_per_name
     num_tokens += 3  # every reply is primed with <|start|>assistant<|message|>

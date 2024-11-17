@@ -39,4 +39,4 @@ class SettingSerializer(serializers.ModelSerializer):
 class LanguageModelSerializer(serializers.ModelSerializer):
     class Meta:
         model = LanguageModel
-        fields = ['id', 'name', 'display_name', 'max_tokens', 'max_prompt_tokens', 'max_response_tokens', 'created_at', 'updated_at']
+        fields = ['id', 'name', 'display_name', 'max_tokens', 'max_prompt_tokens', 'max_response_tokens', 'created_at', 'updated_at', 'image_support']

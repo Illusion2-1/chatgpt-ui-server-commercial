@@ -31,6 +31,35 @@ SECRET_KEY = 'django-insecure-__9p!i2^udts*l==hl)+6=!fi872f3ec(n%(^f-!6i$o5+7#ar
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '{levelname} {asctime} {module} {message}',
+            'style': '{',
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'verbose',
+        },
+        'file': {
+            'class': 'logging.FileHandler',
+            'filename': 'debug.log',
+            'formatter': 'verbose',
+        },
+    },
+    'loggers': {
+        'chat.views': {  # 这里使用你的应用名.views
+            'handlers': ['console', 'file'],
+            'level': 'DEBUG',
+            'propagate': True,
+        },
+    },
+}
+
 ALLOWED_HOSTS = ['*']
 
 app_domains = os.getenv('APP_DOMAIN', 'localhost:9000').split(',')

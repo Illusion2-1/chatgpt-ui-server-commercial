@@ -69,6 +69,7 @@ class LanguageModel(models.Model):
     presence_penalty = models.FloatField(default=0.0)
     temperature = models.FloatField(default=0.7)
     top_p = models.FloatField(default=1.0)
+    image_support = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
