@@ -36,6 +36,7 @@ from subscription.utils import rate_limiter
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = os.getenv('DEFAULT_MODEL', 'gpt-4o-mini-2024-07-18')
+IMAGE_PRICE = os.getenv('IMAGE_PRICE', 1000)
 
 class SettingViewSet(viewsets.ModelViewSet):
     serializer_class = SettingSerializer
@@ -907,7 +908,7 @@ def num_tokens_from_messages(messages, model="gpt-4o-mini-2024-07-18"):
                     if content_item["type"] == "text":
                         num_tokens += len(encoding.encode(content_item["text"]))
                     elif content_item["type"] == "image_url":
-                        num_tokens += 1000
+                        num_tokens += IMAGE_PRICE
             else:
                 # 处理普通文本消息
                 if isinstance(value, str):
