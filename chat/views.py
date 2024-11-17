@@ -581,7 +581,8 @@ def conversation(request):
                     embedding_doc_id=m.get('embedding_message_doc', 0),
                     messages=messages['messages'],
                     tokens=messages['tokens'],
-                    api_key=api_key
+                    api_key=api_key,
+                    image_hash=m.get('image_hash', '')
                 )
                 yield sse_pack('userMessageId', {
                     'userMessageId': message_obj.id,
@@ -626,7 +627,8 @@ def conversation(request):
             message_type=bot_message_type,
             is_bot=True,
             tokens=ai_message_token,
-            api_key=api_key
+            api_key=api_key,
+            image_hash=''
         )
         yield sse_pack('done', {
             'messageId': ai_message_obj.id,
@@ -661,7 +663,8 @@ def conversation(request):
                     embedding_doc_id=m.get('embedding_message_doc', 0),
                     messages=messages['messages'],
                     tokens=messages['tokens'],
-                    api_key=api_key
+                    api_key=api_key,
+                    image_hash=m.get('image_hash', '')
                 )
                 yield sse_pack('userMessageId', {
                     'userMessageId': message_obj.id,
@@ -703,7 +706,8 @@ def conversation(request):
             message_type=bot_message_type,
             is_bot=True,
             tokens=ai_message_token,
-            api_key=api_key
+            api_key=api_key,
+            image_hash=''
         )
         yield sse_pack('done', {
             'messageId': ai_message_obj.id,
@@ -734,7 +738,7 @@ def documents(request):
     pass
 
 
-def create_message(user, conversation_id, message, is_bot=False, message_type=0, embedding_doc_id=None, messages='', tokens=0, api_key=None):
+def create_message(user, conversation_id, message, is_bot=False, message_type=0, embedding_doc_id=None, messages='', tokens=0, api_key=None, image_hash=''):
     message_obj = Message(
         conversation_id=conversation_id,
         user=user,
@@ -744,6 +748,7 @@ def create_message(user, conversation_id, message, is_bot=False, message_type=0,
         embedding_message_doc=EmbeddingDocument.objects.get(pk=embedding_doc_id) if embedding_doc_id else None,
         messages=messages,
         tokens=tokens,
+        image_hash=image_hash,
     )
     if message_type != Message.temp_message_type:
         message_obj.save()
